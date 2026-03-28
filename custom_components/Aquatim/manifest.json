@@ -1,6 +1,7 @@
 {
   "domain": "aquatim",
   "name": "Aquatim Portal",
+  "config_flow": true,
   "codeowners": ["@v1n3ri"],
   "dependencies": [],
   "documentation": "https://github.com/v1n3ri/aquatim",
