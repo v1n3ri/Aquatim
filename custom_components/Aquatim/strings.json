@@ -1,0 +1,35 @@
+{
+  "title": "Aquatim Portal",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Autentificare Aquatim",
+        "description": "Introduceți datele de logare pentru portalul https://portal.aquatim.ro",
+        "data": {
+          "email": "Email",
+          "password": "Parolă"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Eroare de conexiune la portalul Aquatim.",
+      "invalid_auth": "Email sau parolă incorectă.",
+      "unknown": "Eroare neașteptată."
+    },
+    "abort": {
+      "already_configured": "Acest cont Aquatim este deja configurat."
+    }
+  },
+  "services": {
+    "send_water_index": {
+      "name": "Trimite Index Apă",
+      "description": "Transmite indexul curent al apometrului către Aquatim.",
+      "fields": {
+        "value": {
+          "name": "Valoare Index",
+          "description": "Numărul citit de pe apometru (ex: 123)."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Autentificare Portal Aquatim",
+        "description": "Introdu adresa de email și parola folosite pe portalul Aquatim.",
+        "data": {
+          "email": "Adresă Email",
+          "password": "Parolă"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Eroare la conectarea cu portalul",
+      "invalid_auth": "Email sau parolă incorectă"
+    }
+  },
+  "services": {
+    "send_water_index": {
+      "name": "Trimite Index Apă",
+      "description": "Trimite valoarea curentă a apometrului către Aquatim.",
+      "fields": {
+        "value": {
+          "name": "Valoare Index",
+          "description": "Cifrele citite de pe apometru."
+        }
+      }
+    }
+  }
+}
