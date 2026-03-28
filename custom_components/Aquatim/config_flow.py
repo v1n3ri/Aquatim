@@ -3,6 +3,7 @@ from homeassistant import config_entries
 from .const import DOMAIN, CONF_EMAIL, CONF_PASSWORD
 
 class AquatimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+VERSION = 1  # Adaugă această linie
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:

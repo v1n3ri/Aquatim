@@ -1,5 +1,5 @@
 {
-  "domain": "aquatim",
+  "domain": "Aquatim",
   "name": "Aquatim Portal",
   "config_flow": true,
   "codeowners": ["@v1n3ri"],

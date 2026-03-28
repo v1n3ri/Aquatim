@@ -1,4 +1,4 @@
-DOMAIN = "aquatim"
+DOMAIN = "Aquatim"
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 

@@ -1,7 +1,7 @@
 import aiohttp
 import logging
 from bs4 import BeautifulSoup
-from .const import URL_LOGIN, URL_DASHBOARD, HEADERS
+from .const import URL_LOGIN, URL_DASHBOARD, URL_POST_INDEX, HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,41 +12,62 @@ class AquatimAPI:
         self.session = None
 
     async def _get_session(self):
-        """Creează o sesiune dacă nu există."""
+        """Creează sau returnează sesiunea activă cu suport pentru cookies."""
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(headers=HEADERS, cookie_jar=aiohttp.CookieJar())
+            self.session = aiohttp.ClientSession(
+                headers=HEADERS, 
+                cookie_jar=aiohttp.CookieJar()
+            )
         return self.session
 
     async def login(self):
-        """Efectuează autentificarea."""
+        """Efectuează autentificarea pe portal."""
         session = await self._get_session()
-        payload = {"user": self.email, "pass": self.password}
+        # Folosim id-urile 'user' și 'pass' identificate de tine în HTML
+        payload = {
+            "user": self.email,
+            "pass": self.password,
+            "login": "Autentificare"
+        }
         try:
-            async with session.post(URL_LOGIN, data=payload) as resp:
-                return resp.status == 200 and "login.jsp" not in str(resp.url)
+            async with session.post(URL_LOGIN, data=payload, timeout=10) as resp:
+                # Verificăm dacă am fost redirecționați de la pagina de login (semn de succes)
+                if resp.status == 200 and "login.jsp" not in str(resp.url):
+                    _LOGGER.debug("Autentificare reușită pentru %s", self.email)
+                    return True
+                _LOGGER.error("Autentificare eșuată. Verificați credențialele.")
+                return False
         except Exception as e:
-            _LOGGER.error("Eroare la login: %s", e)
+            _LOGGER.error("Eroare la conectarea cu portalul Aquatim: %s", e)
             return False
 
     async def get_balance(self):
-        """Extrage soldul din dashboard."""
-        if await self.login():
-            session = await self._get_session()
-            async with session.get(URL_DASHBOARD) as resp:
+        """Extrage soldul curent prin web scraping."""
+        if not await self.login():
+            return None
+
+        session = await self._get_session()
+        try:
+            async with session.get(URL_DASHBOARD, timeout=10) as resp:
+                if resp.status != 200:
+                    return None
+                
                 html = await resp.text()
                 soup = BeautifulSoup(html, 'html.parser')
+                # Căutăm link-ul cu id-ul specific identificat anterior
                 element = soup.find("a", {"id": "__link0"})
+                
                 if element:
-                    # Extrage cifra din "Sold : 12.50"
-                    return element.get_text().replace("Sold :", "").strip()
-        return None
+                    raw_text = element.get_text() # Exemplu: "Sold : 12.50"
+                    # Curățăm textul pentru a rămâne doar cu valoarea numerică
+                    clean_value = raw_text.replace("Sold :", "").strip()
+                    _LOGGER.debug("Sold extras: %s", clean_value)
+                    return clean_value
+                
+                _LOGGER.warning("Elementul de sold nu a fost găsit în pagină.")
+                return None
+        except Exception as e:
+            _LOGGER.error("Eroare la extragerea soldului: %s", e)
+            return None
 
     async def send_index(self, value):
-        """Trimite indexul nou."""
-        if await self.login():
-            session = await self._get_session()
-            # Aici pui URL-ul și câmpul corect pentru index
-            payload = {"index_nou": value, "submit": "Trimite"}
-            async with session.post("URL_PENTRU_SUBMIT", data=payload) as resp:
-                return resp.status == 200
-        return False
