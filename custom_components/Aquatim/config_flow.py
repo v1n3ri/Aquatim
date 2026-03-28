@@ -1,13 +1,13 @@
-import voluptuous as vol
 from homeassistant import config_entries
 from .const import DOMAIN, CONF_EMAIL, CONF_PASSWORD
+import voluptuous as vol
 
 class AquatimConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-VERSION = 1  # Adaugă această linie
+    """Handle a config flow for Aquatim."""
+    VERSION = 1  # <--- Asigură-te că această linie există
+
     async def async_step_user(self, user_input=None):
-        errors = {}
         if user_input is not None:
-            # Aici s-ar putea adăuga o verificare a credențialelor înainte de salvare
             return self.async_create_entry(title=user_input[CONF_EMAIL], data=user_input)
 
         return self.async_show_form(
@@ -16,5 +16,4 @@ VERSION = 1  # Adaugă această linie
                 vol.Required(CONF_EMAIL): str,
                 vol.Required(CONF_PASSWORD): str,
             }),
-            errors=errors,
         )
