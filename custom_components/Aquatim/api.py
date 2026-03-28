@@ -71,3 +71,18 @@ class AquatimAPI:
             return None
 
     async def send_index(self, value):
+        """Trimite indexul nou către Aquatim."""
+        if not await self.login():
+            return False
+
+        session = await self._get_session()
+        payload = {
+            "index_nou": value,
+            "submit": "Trimite"
+        }
+        try:
+            async with session.post(URL_POST_INDEX, data=payload, timeout=10) as resp:
+                return resp.status == 200
+        except Exception as e:
+            _LOGGER.error("Eroare la trimiterea indexului: %s", e)
+            return False
