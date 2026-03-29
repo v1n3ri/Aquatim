@@ -6,6 +6,6 @@
   "dependencies": [],
   "documentation": "https://github.com/v1n3ri/aquatim",
   "requirements": [],
-  "version": "1.0.0",
+  "version": "1.2.3",
   "iot_class": "cloud_polling"
 }
