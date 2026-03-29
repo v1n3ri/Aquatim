@@ -1,4 +1,4 @@
-DOMAIN = "aquatim" # Asigură-te că e cu "a" mic!
+DOMAIN = "Aquatim" 
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 
