@@ -5,7 +5,7 @@
   "codeowners": ["@v1n3ri"],
   "dependencies": [],
   "documentation": "https://github.com/v1n3ri/aquatim",
-  "requirements": ["beautifulsoup4==4.12.3"],
+  "requirements": [],
   "version": "1.0.0",
   "iot_class": "cloud_polling"
 }
