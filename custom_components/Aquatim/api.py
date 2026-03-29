@@ -69,7 +69,7 @@ async def get_data(self):
         except Exception as e:
             _LOGGER.error("Eroare la preluarea datelor: %s", e)
             return None
-            
+
     async def close(self):
         """Închide sesiunea aiohttp."""
         if self.session:
