@@ -19,17 +19,5 @@
     "abort": {
       "already_configured": "Acest cont Aquatim este deja configurat."
     }
-  },
-  "services": {
-    "send_water_index": {
-      "name": "Trimite Index Apă",
-      "description": "Transmite indexul curent al apometrului către Aquatim.",
-      "fields": {
-        "value": {
-          "name": "Valoare Index",
-          "description": "Numărul citit de pe apometru (ex: 123)."
-        }
-      }
-    }
   }
 }

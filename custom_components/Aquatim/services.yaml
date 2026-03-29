@@ -1,7 +1,0 @@
-send_water_index:
-  description: Trimite indexul de apă către portalul Aquatim.
-  fields:
-    value:
-      description: Valoarea indexului citit de pe apometru.
-      example: "123"
-      required: true
