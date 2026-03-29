@@ -60,7 +60,7 @@ class AquatimAPI:
                 if element:
                     raw_text = element.get_text() # Exemplu: "Sold : 12.50"
                     # Curățăm textul pentru a rămâne doar cu valoarea numerică
-                    clean_value = raw_text.replace("Sold :", "").strip()
+                    clean_value = raw_text.replace("Sold : ", "").strip()
                     _LOGGER.debug("Sold extras: %s", clean_value)
                     return clean_value
                 
