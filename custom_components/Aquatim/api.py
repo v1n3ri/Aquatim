@@ -82,16 +82,21 @@ class AquatimAPI:
 
             # 3. Verificăm perioada de transmitere index
             mesaj_index = "Informație indisponibilă"
+            start_perioada = "N/A"
+            sfarsit_perioada = "N/A"
+            
             async with session.get(URL_VERIFICA_PERIOADA, params={"codClient": cod_client}, headers=data_headers) as p_resp:
                 try:
                     p_data = await p_resp.json()
-                    _LOGGER.warning("Date perioadă index: %s", p_data)
-                    # Extragem câmpul 'response' care conține textul complet
-                    mesaj_index = p_data.get("response", "Perioada nu a putut fi determinată")
+                    _LOGGER.warning("Date perioadă index procesate: %s", p_data)
+                    
+                    # Extragem valorile individuale
+                    mesaj_index = p_data.get("response", "N/A")
+                    start_perioada = p_data.get("start", "N/A")
+                    sfarsit_perioada = p_data.get("end", "N/A")
                 except Exception:
-                    # Fallback în cazul în care serverul trimite text simplu în loc de JSON
                     raw_p = await p_resp.text()
-                    mesaj_index = raw_p.strip() if raw_p else mesaj_index
+                    mesaj_index = raw_p.strip()
 
             return {
                 "cod_client": cod_client,
@@ -100,7 +105,9 @@ class AquatimAPI:
                 "adresa": c.get("adrClient", "N/A"),
                 "stare": c.get("stareContract", "N/A"),
                 "sold": sold_final,
-                "perioada_index": mesaj_index
+                "perioada_index": mesaj_index,
+                "start_citire": start_perioada,
+                "sfarsit_citire": sfarsit_perioada
             }
 
         except Exception as e:
