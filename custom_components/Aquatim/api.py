@@ -5,6 +5,7 @@ from .const import HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
+# Endpoint-urile confirmate din payload-ul de browser și Component-preload.js
 URL_REST_LOGIN = "https://portal.aquatim.ro/self_utilities/rest/admcl/login"
 URL_INFO_SESSION = "https://portal.aquatim.ro/self_utilities/rest/self/infoSession"
 URL_LISTA_CONTRACTE = "https://portal.aquatim.ro/self_utilities/rest/self/admcl/getListaContracte"
@@ -14,23 +15,19 @@ class AquatimAPI:
         self.email = email
         self.password = password
         self.session = None
+        self.session_id = None
 
     async def _get_session(self):
         if self.session is None or self.session.closed:
-            # Recreăm setul de headere exact cum l-ai trimis tu din browser
+            # Headerele care imită exact browserul tău pentru a trece de Cloudflare
             browser_headers = {
                 "authority": "portal.aquatim.ro",
                 "accept": "application/json, text/javascript, */*; q=0.01",
-                "accept-language": "en-US,en;q=0.9,ro-RO;q=0.8,ro;q=0.7",
+                "accept-language": "ro-RO,ro;q=0.9,en-US;q=0.8,en;q=0.7",
                 "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "origin": "https://portal.aquatim.ro",
                 "referer": "https://portal.aquatim.ro/self_utilities/login.jsp",
-                "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
-                "sec-ch-ua-mobile": "?0",
                 "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-origin",
                 "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                 "x-requested-with": "XMLHttpRequest",
             }
@@ -43,57 +40,36 @@ class AquatimAPI:
     async def login(self):
         session = await self._get_session()
         try:
-            # Cloudflare are nevoie de o vizită inițială pentru a seta cookie-urile de bază
-            async with session.get("https://portal.aquatim.ro/self_utilities/login.jsp") as resp:
-                await resp.text()
-
+            # Pasul 1: Login (folosind exact payload-ul văzut de tine în browser)
             login_data = {
                 "user": self.email,
                 "password": self.password 
             }
             
-            _LOGGER.warning("Trimitere Login către Cloudflare/Aquatim...")
-            
             async with session.post(URL_REST_LOGIN, data=login_data) as resp:
-                res_text = await resp.text()
-                _LOGGER.warning("Răspuns Login (Status %s): %s", resp.status, res_text)
-                
-                # Cloudflare poate returna 403 dacă ne detectează
-                if resp.status == 403:
-                    _LOGGER.error("Acces blocat de Cloudflare. Integrarea nu poate trece de protecție.")
-                    return False
-                
                 if resp.status != 200:
+                    _LOGGER.error("Eroare server la login: %s", resp.status)
                     return False
-
-            # Pasul 2: InfoSession
-            async with session.post(URL_INFO_SESSION, json={}) as resp:
-                return resp.status == 200
+                    
+                res_data = await resp.json()
+                if res_data.get("authSuccessfull") is True:
+                    self.session_id = res_data.get("sessionId")
+                    _LOGGER.warning("Autentificare reușită! Sesiune: %s", self.session_id)
+                    
+                    # Pasul 2: Activare context sesiune (POST infoSession conform JS)
+                    await session.post(URL_INFO_SESSION, json={})
+                    return True
+                
+                _LOGGER.error("Login respins: %s", res_data.get("errMessage"))
+                return False
 
         except Exception as e:
-            _LOGGER.error("Eroare la autentificare: %s", e)
+            _LOGGER.error("Eroare la procesul de login: %s", e)
             return False
 
     async def get_data(self):
         if not await self.login():
             return None
 
-        await asyncio.sleep(1)
-        session = await self._get_session()
-        
-        try:
-            async with session.get(URL_LISTA_CONTRACTE) as resp:
-                data = await resp.json()
-                if isinstance(data, list) and len(data) > 0:
-                    c = data[0]
-                    return {
-                        "cod_client": str(c.get("codClient", "N/A")),
-                        "nr_contract": str(c.get("nrContract", "N/A")),
-                        "nume": c.get("denClient", "N/A"),
-                        "adresa": c.get("adrClient", "N/A"),
-                        "stare": c.get("stareContract", "N/A")
-                    }
-            return None
-        except Exception as e:
-            _LOGGER.error("Eroare preluare date: %s", e)
-            return None
+        # Mică pauză pentru ca serverul să proceseze sesiunea
+        await asyncio
