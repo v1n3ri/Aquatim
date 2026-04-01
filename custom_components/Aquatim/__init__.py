@@ -7,13 +7,8 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Configurare de bază fără servicii care pot da erori."""
-    email = entry.data["email"]
-    password = entry.data["password"]
-
-    api = AquatimAPI(email, password)
-    
-    hass.data.setdefault(DOMAIN, {sys})
+    api = AquatimAPI(entry.data["email"], entry.data["password"])
+    hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = api
 
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
