@@ -1,11 +1,12 @@
 {
   "domain": "Aquatim",
   "name": "Aquatim Portal",
-  "config_flow": true,
   "codeowners": ["@v1n3ri"],
+  "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/v1n3ri/aquatim",
-  "requirements": [],
-  "version": "1.2.3",
-  "iot_class": "cloud_polling"
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/v1n3ri/aquatim/issues",
+  "requirements": ["beautifulsoup4==4.12.3"],
+  "version": "1.1.0"
 }
