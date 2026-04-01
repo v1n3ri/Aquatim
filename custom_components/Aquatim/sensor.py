@@ -76,6 +76,6 @@ class AquatimSensor(SensorEntity):
         return {
             "identifiers": {("Aquatim", self._entry.entry_id)},
             "name": address,  # Aici punem adresa (ex: VIORELELOR, nr. 15)
-            "manufacturer": "Aquatim SA",
+            "manufacturer": "Dan Drasovean (v1n3ri)",
             "entry_type": "service",
         }
