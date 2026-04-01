@@ -70,7 +70,7 @@ class AquatimSensor(SensorEntity):
         """Grupare sub un singur dispozitiv."""
         return {
             "identifiers": {("Aquatim", self._entry.entry_id)},
-            "name": "Portal Aquatim",
-            "manufacturer": "Aquatim SA",
+            "name": "Aquatim Portal",
+            "manufacturer": "Dan Drasovean (v1n3ri)",
             "entry_type": "service",
         }
