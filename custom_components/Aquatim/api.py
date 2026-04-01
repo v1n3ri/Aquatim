@@ -5,7 +5,6 @@ from .const import HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
-# Endpoint-urile confirmate din payload-ul de browser și Component-preload.js
 URL_REST_LOGIN = "https://portal.aquatim.ro/self_utilities/rest/admcl/login"
 URL_INFO_SESSION = "https://portal.aquatim.ro/self_utilities/rest/self/infoSession"
 URL_LISTA_CONTRACTE = "https://portal.aquatim.ro/self_utilities/rest/self/admcl/getListaContracte"
@@ -19,7 +18,6 @@ class AquatimAPI:
 
     async def _get_session(self):
         if self.session is None or self.session.closed:
-            # Headerele care imită exact browserul tău pentru a trece de Cloudflare
             browser_headers = {
                 "authority": "portal.aquatim.ro",
                 "accept": "application/json, text/javascript, */*; q=0.01",
@@ -27,7 +25,6 @@ class AquatimAPI:
                 "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "origin": "https://portal.aquatim.ro",
                 "referer": "https://portal.aquatim.ro/self_utilities/login.jsp",
-                "sec-ch-ua-platform": '"Windows"',
                 "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                 "x-requested-with": "XMLHttpRequest",
             }
@@ -40,36 +37,76 @@ class AquatimAPI:
     async def login(self):
         session = await self._get_session()
         try:
-            # Pasul 1: Login (folosind exact payload-ul văzut de tine în browser)
-            login_data = {
-                "user": self.email,
-                "password": self.password 
-            }
-            
-            async with session.post(URL_REST_LOGIN, data=login_data) as resp:
-                if resp.status != 200:
-                    _LOGGER.error("Eroare server la login: %s", resp.status)
-                    return False
-                    
+            # Refresh cookie-uri
+            await session.get("https://portal.aquatim.ro/self_utilities/login.jsp", timeout=10)
+
+            login_data = {"user": self.email, "password": self.password}
+            async with session.post(URL_REST_LOGIN, data=login_data, timeout=10) as resp:
                 res_data = await resp.json()
                 if res_data.get("authSuccessfull") is True:
                     self.session_id = res_data.get("sessionId")
-                    _LOGGER.warning("Autentificare reușită! Sesiune: %s", self.session_id)
+                    _LOGGER.warning("Autentificare reușită! Sesiune activă.")
                     
-                    # Pasul 2: Activare context sesiune (POST infoSession conform JS)
-                    await session.post(URL_INFO_SESSION, json={})
+                    # PAS CRUCIAL: Activăm sesiunea. 
+                    # Unele sisteme cer sessionId-ul în body-ul infoSession
+                    await session.post(URL_INFO_SESSION, json={"sessionId": self.session_id}, timeout=10)
                     return True
-                
-                _LOGGER.error("Login respins: %s", res_data.get("errMessage"))
                 return False
-
         except Exception as e:
-            _LOGGER.error("Eroare la procesul de login: %s", e)
+            _LOGGER.error("Eroare la login: %s", e)
             return False
 
     async def get_data(self):
+        # Încercăm logarea
         if not await self.login():
             return None
 
-        # Mică pauză pentru ca serverul să proceseze sesiunea
-        await asyncio
+        await asyncio.sleep(1)
+        session = await self._get_session()
+        
+        try:
+            # Trimitem Session-Id în header pentru siguranță
+            headers = {
+                "Accept": "application/json",
+                "Session-Id": str(self.session_id) if self.session_id else ""
+            }
+
+            async with session.get(URL_LISTA_CONTRACTE, headers=headers, timeout=10) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning("Serverul de contracte a răspuns cu status %s", resp.status)
+                    return None
+                
+                # Citim răspunsul ca text mai întâi pentru a evita erori de JSON gol
+                raw_text = await resp.text()
+                _LOGGER.warning("Date brute contracte: %s", raw_text)
+                
+                if not raw_text or raw_text.strip() == "":
+                    _LOGGER.error("Serverul a returnat un răspuns gol la lista de contracte.")
+                    return None
+
+                data = await resp.json()
+                
+                # Logică sigură de extragere
+                contracte = []
+                if isinstance(data, list):
+                    contracte = data
+                elif isinstance(data, dict):
+                    contracte = data.get("listaContracte", data.get("lista", []))
+
+                if contracte and len(contracte) > 0:
+                    c = contracte[0]
+                    return {
+                        "cod_client": str(c.get("codClient", "N/A")),
+                        "nr_contract": str(c.get("nrContract", "N/A")),
+                        "nume": c.get("denClient", "N/A"),
+                        "adresa": c.get("adrClient", "N/A"),
+                        "stare": c.get("stareContract", "N/A"),
+                        "sold": 0
+                    }
+                
+                _LOGGER.warning("Nu s-au găsit contracte în răspunsul JSON.")
+                return None
+
+        except Exception as e:
+            _LOGGER.error("Eroare neașteptată în get_data la linia 75: %s", e)
+            return None
