@@ -8,7 +8,6 @@ from homeassistant.components.sensor import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Intervalul de scanare la 4 ore
 SCAN_INTERVAL = timedelta(hours=4)
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -55,20 +54,20 @@ class AquatimSensor(SensorEntity):
 
     @property
     def native_value(self):
-        """Returnează valoarea din cache-ul stocat în API."""
+        """Returnează valoarea din cache."""
         if hasattr(self._api, "last_data") and self._api.last_data:
              return self._api.last_data.get(self._key)
         return None
 
     async def async_update(self):
-        """Update periodic la fiecare 4 ore."""
+        """Update periodic."""
         data = await self._api.get_data()
         if data:
             self._api.last_data = data
 
     @property
     def device_info(self):
-        """Grupare sub un singur dispozitiv în interfață."""
+        """Grupare sub un singur dispozitiv."""
         return {
             "identifiers": {("Aquatim", self._entry.entry_id)},
             "name": "Portal Aquatim",
