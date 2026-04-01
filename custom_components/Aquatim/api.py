@@ -1,6 +1,7 @@
 import aiohttp
 import logging
 import asyncio
+import json
 from .const import HEADERS
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ class AquatimAPI:
         if self.session is None or self.session.closed:
             browser_headers = {
                 "authority": "portal.aquatim.ro",
-                "accept": "application/json, text/javascript, */*; q=0.01",
+                "accept": "application/json, text/plain, */*",
                 "accept-language": "ro-RO,ro;q=0.9,en-US;q=0.8,en;q=0.7",
                 "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "origin": "https://portal.aquatim.ro",
@@ -37,27 +38,23 @@ class AquatimAPI:
     async def login(self):
         session = await self._get_session()
         try:
-            # Refresh cookie-uri
             await session.get("https://portal.aquatim.ro/self_utilities/login.jsp", timeout=10)
-
             login_data = {"user": self.email, "password": self.password}
+            
             async with session.post(URL_REST_LOGIN, data=login_data, timeout=10) as resp:
                 res_data = await resp.json()
                 if res_data.get("authSuccessfull") is True:
                     self.session_id = res_data.get("sessionId")
-                    _LOGGER.warning("Autentificare reușită! Sesiune activă.")
-                    
-                    # PAS CRUCIAL: Activăm sesiunea. 
-                    # Unele sisteme cer sessionId-ul în body-ul infoSession
-                    await session.post(URL_INFO_SESSION, json={"sessionId": self.session_id}, timeout=10)
+                    _LOGGER.warning("Autentificare reușită! Sesiune: %s", self.session_id)
+                    # Activăm sesiunea fără a aștepta un body specific
+                    await session.post(URL_INFO_SESSION, json={}, timeout=10)
                     return True
                 return False
         except Exception as e:
-            _LOGGER.error("Eroare la login: %s", e)
+            _LOGGER.error("Eroare login: %s", e)
             return False
 
     async def get_data(self):
-        # Încercăm logarea
         if not await self.login():
             return None
 
@@ -65,48 +62,36 @@ class AquatimAPI:
         session = await self._get_session()
         
         try:
-            # Trimitem Session-Id în header pentru siguranță
-            headers = {
-                "Accept": "application/json",
-                "Session-Id": str(self.session_id) if self.session_id else ""
-            }
-
-            async with session.get(URL_LISTA_CONTRACTE, headers=headers, timeout=10) as resp:
-                if resp.status != 200:
-                    _LOGGER.warning("Serverul de contracte a răspuns cu status %s", resp.status)
-                    return None
-                
-                # Citim răspunsul ca text mai întâi pentru a evita erori de JSON gol
+            # IMPORTANT: Nu mai folosim resp.json() direct pentru a evita crash-ul la linia 75
+            async with session.get(URL_LISTA_CONTRACTE, timeout=10) as resp:
                 raw_text = await resp.text()
-                _LOGGER.warning("Date brute contracte: %s", raw_text)
-                
-                if not raw_text or raw_text.strip() == "":
-                    _LOGGER.error("Serverul a returnat un răspuns gol la lista de contracte.")
+                _LOGGER.warning("Răspuns brut server (Status %s): %s", resp.status, raw_text)
+
+                if not raw_text or resp.status != 200:
                     return None
 
-                data = await resp.json()
+                try:
+                    data = json.loads(raw_text)
+                except Exception as json_err:
+                    _LOGGER.error("Serverul nu a trimis JSON valid: %s", json_err)
+                    return None
                 
-                # Logică sigură de extragere
-                contracte = []
-                if isinstance(data, list):
-                    contracte = data
-                elif isinstance(data, dict):
-                    contracte = data.get("listaContracte", data.get("lista", []))
+                contracte = data if isinstance(data, list) else data.get("lista", [])
 
                 if contracte and len(contracte) > 0:
                     c = contracte[0]
                     return {
                         "cod_client": str(c.get("codClient", "N/A")),
-                        "nr_contract": str(c.get("nrContract", "N/A")),
+                        "nr_contract": str(c.get("nr_contract", c.get("nrContract", "N/A"))),
                         "nume": c.get("denClient", "N/A"),
                         "adresa": c.get("adrClient", "N/A"),
                         "stare": c.get("stareContract", "N/A"),
                         "sold": 0
                     }
                 
-                _LOGGER.warning("Nu s-au găsit contracte în răspunsul JSON.")
+                _LOGGER.warning("Lista de contracte este goală în JSON.")
                 return None
 
         except Exception as e:
-            _LOGGER.error("Eroare neașteptată în get_data la linia 75: %s", e)
+            _LOGGER.error("Eroare critică în get_data: %s", e)
             return None
