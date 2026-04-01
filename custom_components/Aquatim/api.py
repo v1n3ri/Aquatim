@@ -15,7 +15,6 @@ class AquatimAPI:
 
     async def _get_session(self):
         if self.session is None or self.session.closed:
-            # Folosim un CookieJar care stochează automat cookie-urile de sesiune
             self.session = aiohttp.ClientSession(
                 headers=HEADERS,
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
@@ -25,63 +24,55 @@ class AquatimAPI:
     async def login(self):
         session = await self._get_session()
         
-        # Datele de login exact cum pleacă din formularul HTML al site-ului
-        payload = {
-            "user": self.email,
-            "pass": self.password,
-            "login": "Autentificare"
-        }
-        
-        # Header special pentru a simula trimiterea unui formular web
-        login_headers = {
-            **HEADERS,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Referer": "https://portal.aquatim.ro/self_utilities/login.jsp",
-            "Origin": "https://portal.aquatim.ro"
-        }
-
         try:
-            _LOGGER.debug("Se încearcă login pentru: %s", self.email)
-            async with session.post(URL_LOGIN, data=payload, headers=login_headers, timeout=15, allow_redirects=True) as resp:
-                text = await resp.text()
-                
-                # Verificăm dacă suntem încă pe pagina de login (semn de eșec)
-                # Sau dacă în răspuns apare ceva de genul "Eroare autentificare"
-                if resp.status == 200 and "login.jsp" not in str(resp.url):
-                    _LOGGER.info("Autentificare Aquatim reușită!")
+            # PASUL 1: Accesăm pagina de login pentru a obține cookie-urile inițiale
+            async with session.get(URL_LOGIN, timeout=10) as resp:
+                await resp.text()
+            
+            # PASUL 2: Trimitem datele de logare
+            payload = {
+                "user": self.email,
+                "pass": self.password,
+                "login": "Autentificare"
+            }
+            
+            # Adăugăm headers extra pentru a simula un formular real
+            extra_headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://portal.aquatim.ro",
+                "Referer": "https://portal.aquatim.ro/self_utilities/login.jsp"
+            }
+
+            async with session.post(URL_LOGIN, data=payload, headers=extra_headers, timeout=15, allow_redirects=True) as resp:
+                final_url = str(resp.url)
+                text_raspuns = await resp.text()
+
+                # Dacă URL-ul s-a schimbat din login.jsp în index.jsp sau altceva, e succes
+                if resp.status == 200 and "login.jsp" not in final_url:
+                    _LOGGER.info("Autentificare reușită la Aquatim.")
                     return True
                 
-                _LOGGER.error("Autentificare eșuată. Serverul a returnat pagina de login sau eroare.")
+                _LOGGER.error("Eșec la autentificare. URL final: %s. Verificați dacă email/parola sunt corecte.", final_url)
                 return False
+
         except Exception as e:
-            _LOGGER.error("Eroare critică la login: %s", e)
+            _LOGGER.error("Eroare în timpul procesului de login: %s", e)
             return False
 
     async def get_data(self):
-        # Încercăm login
         if not await self.login():
             return None
 
-        # O mică pauză să fim siguri că sesiunea e activă
         await asyncio.sleep(1)
-        
         session = await self._get_session()
-        # Header pentru cererea de date (JSON)
-        data_headers = {
-            **HEADERS,
-            "Accept": "application/json, text/plain, */*",
-            "Referer": "https://portal.aquatim.ro/self_utilities/index.jsp"
-        }
-
+        
         try:
-            async with session.get(URL_LISTA_CONTRACTE, headers=data_headers, timeout=15) as resp:
+            async with session.get(URL_LISTA_CONTRACTE, timeout=10) as resp:
                 if resp.status != 200:
-                    _LOGGER.error("Eroare API la preluare contracte: %s", resp.status)
+                    _LOGGER.error("Portalul a returnat status %s la cererea de date", resp.status)
                     return None
                 
                 data = await resp.json()
-                _LOGGER.debug("Date primite: %s", data)
-
                 if isinstance(data, list) and len(data) > 0:
                     c = data[0]
                     return {
@@ -90,10 +81,9 @@ class AquatimAPI:
                         "nume": c.get("denClient", "N/A"),
                         "adresa": c.get("adrClient", "N/A"),
                         "stare": c.get("stareContract", "N/A"),
-                        "sold": 0 # Vom adăuga logica de sold după ce vedem că merge asta
+                        "sold": 0
                     }
-                _LOGGER.warning("Lista de contracte este goală.")
                 return None
         except Exception as e:
-            _LOGGER.error("Eroare la get_data: %s", e)
+            _LOGGER.error("Eroare la preluarea datelor finale: %s", e)
             return None
