@@ -1,12 +1,12 @@
 import aiohttp
 import logging
 import asyncio
-import urllib.parse
-from bs4 import BeautifulSoup
 from .const import URL_LOGIN, HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
+# Endpoint-uri derivate din structura SAP observată
+URL_AUTH = "https://portal.aquatim.ro/self_utilities/j_security_check"
 URL_INFO_SESSION = "https://portal.aquatim.ro/self_utilities/rest/self/infoSession"
 URL_LISTA_CONTRACTE = "https://portal.aquatim.ro/self_utilities/rest/self/admcl/getListaContracte"
 
@@ -28,71 +28,62 @@ class AquatimAPI:
         session = await self._get_session()
         
         try:
-            # PASUL 1: Preluăm pagina de login pentru cookie-uri inițiale și campuri hidden
-            async with session.get(URL_LOGIN, timeout=10) as resp:
-                html = await resp.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                form_data = {
-                    tag.get("name"): tag.get("value", "")
-                    for tag in soup.find_all("input", type="hidden")
-                    if tag.get("name")
-                }
+            # 1. Pas obligatoriu pentru a genera JSESSIONID
+            async with session.get("https://portal.aquatim.ro/self_utilities/login.jsp") as resp:
+                await resp.text()
 
-            # PASUL 2: POST Login
-            payload = {
-                **form_data,
-                "user": self.email,
-                "pass": self.password,
-                "login": "Autentificare"
+            # 2. Trimitem datele către j_security_check (Standard Java/SAP Auth)
+            # Aceasta este ceea ce funcția loginPage() face probabil în spate
+            auth_data = {
+                "j_username": self.email,
+                "j_password": self.password
             }
             
-            # Folosim encoding manual pentru a fi siguri că caracterele speciale din parolă ajung corect
-            encoded_payload = urllib.parse.urlencode(payload)
-            
-            login_headers = {
-                **HEADERS,
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": URL_LOGIN
-            }
+            _LOGGER.debug("Încercare autentificare securizată...")
+            async with session.post(URL_AUTH, data=auth_data, allow_redirects=True) as resp:
+                # Dacă login-ul prin j_security_check reușește, ne trimite la index
+                if resp.status == 200 and "login.jsp" not in str(resp.url):
+                    _LOGGER.info("Autentificare reușită prin Security Check.")
+                else:
+                    # Dacă metoda de mai sus nu merge, încercăm metoda clasică dar cu parametrii extra
+                    payload = {
+                        "user": self.email,
+                        "pass": self.password,
+                        "login": "Autentificare"
+                    }
+                    async with session.post(URL_LOGIN, data=payload, allow_redirects=True) as resp2:
+                        if "login.jsp" in str(resp2.url):
+                            _LOGGER.error("Toate metodele de autentificare au eșuat.")
+                            return False
 
-            async with session.post(URL_LOGIN, data=encoded_payload, headers=login_headers, allow_redirects=True) as resp:
-                if "login.jsp" in str(resp.url):
-                    _LOGGER.error("Autentificare respinsă (URL-ul a rămas login.jsp)")
-                    return False
-
-            # PASUL 3: ACTIVARE SESIUNE (Request-ul descoperit de tine!)
-            # Fără acest POST, deși suntem logați, API-ul de date va returna eroare sau listă goală
-            _LOGGER.debug("Activare sesiune via infoSession...")
-            async with session.post(URL_INFO_SESSION, json={}, headers={"X-Requested-With": "XMLHttpRequest"}) as resp:
+            # 3. Validăm sesiunea (InfoSession) - Acest pas "leagă" userul de API-ul de date
+            async with session.post(URL_INFO_SESSION, json={}) as resp:
+                res_text = await resp.text()
                 if resp.status == 200:
-                    _LOGGER.info("Sesiune Aquatim activată cu succes.")
+                    _LOGGER.info("Sesiune activată pentru API.")
                     return True
-                
-                _LOGGER.error("Eroare la activarea sesiunii infoSession: %s", resp.status)
-                return False
+            
+            return False
 
         except Exception as e:
-            _LOGGER.error("Eroare în procesul de login: %s", e)
+            _LOGGER.error("Eroare critică: %s", e)
             return False
 
     async def get_data(self):
-        # Ne asigurăm că suntem logați și sesiunea e activată
         if not await self.login():
             return None
 
-        # O mică pauză pentru ca backend-ul să proceseze activarea
         await asyncio.sleep(1)
         session = await self._get_session()
         
-        data_headers = {
+        headers = {
             **HEADERS,
-            "Accept": "application/json, text/plain, */*",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": "https://portal.aquatim.ro/self_utilities/index.jsp"
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
         }
 
         try:
-            async with session.get(URL_LISTA_CONTRACTE, headers=data_headers) as resp:
+            async with session.get(URL_LISTA_CONTRACTE, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     if isinstance(data, list) and len(data) > 0:
@@ -102,11 +93,9 @@ class AquatimAPI:
                             "nr_contract": str(c.get("nrContract", "N/A")),
                             "nume": c.get("denClient", "N/A"),
                             "adresa": c.get("adrClient", "N/A"),
-                            "stare": c.get("stareContract", "N/A"),
-                            "sold": 0
+                            "stare": c.get("stareContract", "N/A")
                         }
-                _LOGGER.warning("Nu s-au putut prelua contractele. Status: %s", resp.status)
                 return None
         except Exception as e:
-            _LOGGER.error("Eroare la preluarea datelor finale: %s", e)
+            _LOGGER.error("Eroare la preluare date: %s", e)
             return None
