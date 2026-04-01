@@ -6,9 +6,10 @@ from .const import URL_LOGIN, HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
-# Endpoint-uri descoperite în component_preload.js
-URL_INFO_SESSION = "https://portal.aquatim.ro/self_utilities/rest/self/infoSession"
-URL_LISTA_CONTRACTE = "https://portal.aquatim.ro/self_utilities/rest/self/admcl/getListaContracte"
+# URL-uri extrase din Component.js și Component-preload.js
+URL_BASE_REST = "https://portal.aquatim.ro/self_utilities/rest/self/"
+URL_INFO_SESSION = f"{URL_BASE_REST}infoSession"
+URL_LISTA_CONTRACTE = f"{URL_BASE_REST}admcl/getListaContracte"
 
 class AquatimAPI:
     def __init__(self, email, password):
@@ -28,12 +29,11 @@ class AquatimAPI:
         session = await self._get_session()
         
         try:
-            # PASUL 1: Inițializăm sesiunea (InfoSession - găsit în JS)
-            # SAP are nevoie de acest apel POST pentru a genera token-ul de securitate
-            async with session.post(URL_INFO_SESSION, json={}, timeout=10) as resp:
-                await resp.text()
+            # 1. Inițializăm sesiunea (InfoSession POST - conform onInit din JS)
+            # Chiar dacă nu suntem logați, acest apel creează contextul de securitate
+            await session.post(URL_INFO_SESSION, json={}, timeout=10)
 
-            # PASUL 2: Luăm formularul de login
+            # 2. Preluăm token-urile din pagina de login
             async with session.get(URL_LOGIN, timeout=10) as resp:
                 html = await resp.text()
                 soup = BeautifulSoup(html, 'html.parser')
@@ -43,7 +43,7 @@ class AquatimAPI:
                     if tag.get("name")
                 }
 
-            # PASUL 3: Login propriu-zis
+            # 3. Executăm Autentificarea
             payload = {
                 **form_data,
                 "user": self.email,
@@ -54,34 +54,43 @@ class AquatimAPI:
             login_headers = {
                 **HEADERS,
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": URL_LOGIN
+                "Referer": URL_LOGIN,
+                "Origin": "https://portal.aquatim.ro"
             }
 
             async with session.post(URL_LOGIN, data=payload, headers=login_headers, allow_redirects=True) as resp:
-                # Verificăm dacă am fost redirecționați departe de login.jsp
-                if "login.jsp" not in str(resp.url):
-                    _LOGGER.info("Autentificare reușită conform fluxului SAP descoperit.")
+                final_url = str(resp.url)
+                if "login.jsp" in final_url:
+                    _LOGGER.error("Aquatim a respins autentificarea. Verificați email-ul și parola.")
+                    return False
+
+            # 4. PASUL CRITIC: Validăm sesiunea de date (Re-apelăm infoSession după login)
+            # Aceasta este metoda prin care interfața UI5 își confirmă drepturile de acces
+            _LOGGER.debug("Validare sesiune post-login...")
+            async with session.post(URL_INFO_SESSION, json={}, headers={"X-Requested-With": "XMLHttpRequest"}) as resp:
+                if resp.status == 200:
+                    _LOGGER.info("Sesiune Aquatim validată cu succes.")
                     return True
                 
-                _LOGGER.error("Autentificare eșuată. Serverul a rămas pe pagina de login.")
-                return False
+            return False
 
         except Exception as e:
-            _LOGGER.error("Eroare la procesul de login (SAP UI5 Logic): %s", e)
+            _LOGGER.error("Eroare în fluxul de autentificare Aquatim: %s", e)
             return False
 
     async def get_data(self):
         if not await self.login():
             return None
 
+        # Pauză scurtă pentru procesarea serverului
         await asyncio.sleep(1)
         session = await self._get_session()
         
-        # Header-ul X-Requested-With este OBLIGATORIU în SAP UI5 (văzut în codul JS)
         data_headers = {
             **HEADERS,
             "Accept": "application/json, text/plain, */*",
-            "X-Requested-With": "XMLHttpRequest"
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://portal.aquatim.ro/self_utilities/index.jsp"
         }
 
         try:
@@ -95,9 +104,11 @@ class AquatimAPI:
                             "nr_contract": str(c.get("nrContract")),
                             "nume": c.get("denClient"),
                             "adresa": c.get("adrClient"),
-                            "stare": c.get("stareContract")
+                            "stare": c.get("stareContract"),
+                            "sold": 0
                         }
+                _LOGGER.warning("Status neașteptat la preluare contracte: %s", resp.status)
                 return None
         except Exception as e:
-            _LOGGER.error("Eroare la preluarea contractelor: %s", e)
+            _LOGGER.error("Eroare la preluarea datelor: %s", e)
             return None
