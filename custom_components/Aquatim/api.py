@@ -2,7 +2,6 @@ import aiohttp
 import logging
 import asyncio
 import json
-from .const import HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,18 +15,17 @@ class AquatimAPI:
         self.email = email
         self.password = password
         self.session = None
-        self.session_id = None
+        self.gsid = None
 
     async def _get_session(self):
         if self.session is None or self.session.closed:
-            # Folosim un CookieJar care NU ignoră cookie-urile setate pe domenii secundare
-            jar = aiohttp.CookieJar(unsafe=True)
+            # Folosim headerele de bază din browser-ul tău
             self.session = aiohttp.ClientSession(
-                cookie_jar=jar,
+                cookie_jar=aiohttp.CookieJar(unsafe=True),
                 headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                    "Accept-Language": "ro-RO,ro;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Connection": "keep-alive"
+                    "Accept-Language": "en-US,en;q=0.9,ro-RO;q=0.8,ro;q=0.7",
+                    "X-Requested-With": "XMLHttpRequest"
                 }
             )
         return self.session
@@ -35,37 +33,21 @@ class AquatimAPI:
     async def login(self):
         session = await self._get_session()
         try:
-            # 1. Accesăm pagina de login pentru a lua cookie-ul JSESSIONID inițial
-            async with session.get(f"{URL_BASE}login.jsp", timeout=10) as resp:
-                await resp.text()
-
-            # 2. Login POST
+            # 1. Login (folosind password, nu pass)
             login_data = {"user": self.email, "password": self.password}
-            login_headers = {
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": f"{URL_BASE}login.jsp",
-                "Accept": "application/json, text/javascript, */*; q=0.01"
-            }
-            
-            async with session.post(URL_REST_LOGIN, data=login_data, headers=login_headers, timeout=10) as resp:
+            async with session.post(URL_REST_LOGIN, data=login_data, headers={"Referer": f"{URL_BASE}login.jsp"}) as resp:
                 res_data = await resp.json()
                 if res_data.get("authSuccessfull") is True:
-                    self.session_id = res_data.get("sessionId")
-                    _LOGGER.warning("Login OK. SessionId preluat.")
+                    # GSID este cheia succesului (self_gsid în browser)
+                    self.gsid = res_data.get("sessionId")
+                    _LOGGER.warning("Autentificare reușită. GSID generat.")
                     
-                    # 3. ACCESARE INDEX (Pasul critic pentru a evita 403)
-                    # Simulăm încărcarea paginii principale după login
-                    async with session.get(f"{URL_BASE}index.jsp", headers={"Referer": f"{URL_BASE}login.jsp"}) as idx_resp:
-                        await idx_resp.text()
-
-                    # 4. InfoSession pentru activarea contextului REST
-                    await session.post(URL_INFO_SESSION, json={}, headers={"X-Requested-With": "XMLHttpRequest", "Referer": f"{URL_BASE}index.jsp"})
+                    # 2. Activare sesiune
+                    await session.post(URL_INFO_SESSION, json={}, headers={"Referer": f"{URL_BASE}oui/cl/index.html"})
                     return True
-                
                 return False
         except Exception as e:
-            _LOGGER.error("Eroare login: %s", e)
+            _LOGGER.error("Eroare la login: %s", e)
             return False
 
     async def get_data(self):
@@ -76,17 +58,20 @@ class AquatimAPI:
         session = await self._get_session()
         
         try:
-            # Setăm Referer la index.jsp pentru a părea o cerere legitimă din portal
+            # Implementăm exact headerele găsite de tine în Chrome
             data_headers = {
-                "Accept": "application/json, text/plain, */*",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": f"{URL_BASE}index.jsp",
-                "Session-Id": str(self.session_id)
+                "accept": "*/*",
+                "oui_req": "true", # Header-ul magic identificat
+                "self_gsid": str(self.gsid), # ID-ul de sesiune cu numele corect
+                "referer": f"{URL_BASE}oui/cl/index.html",
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin"
             }
 
-            async with session.get(URL_LISTA_CONTRACTE, headers=data_headers, timeout=10) as resp:
+            async with session.get(URL_LISTA_CONTRACTE, headers=data_headers, timeout=15) as resp:
                 raw_text = await resp.text()
-                _LOGGER.warning("Răspuns Contracte (Status %s): %s", resp.status, raw_text)
+                _LOGGER.warning("Status: %s | Răspuns: %s", resp.status, raw_text)
 
                 if resp.status == 200 and raw_text:
                     data = json.loads(raw_text)
@@ -104,5 +89,5 @@ class AquatimAPI:
                 return None
 
         except Exception as e:
-            _LOGGER.error("Eroare get_data: %s", e)
+            _LOGGER.error("Eroare la preluarea datelor: %s", e)
             return None
