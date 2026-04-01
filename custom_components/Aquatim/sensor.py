@@ -4,40 +4,47 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Configurare senzori Aquatim."""
-    # Verificăm ce avem în hass.data
-    coordinator = hass.data["Aquatim"][entry.entry_id]
+    """Configurare senzori Aquatim fără CoordinatorEntity."""
+    api_instance = hass.data["Aquatim"][entry.entry_id]
     
-    # Definim lista de senzori
-    sensors = [
-        AquatimSensor(coordinator, entry, "nume", "Nume Client", "mdi:account"),
-        AquatimSensor(coordinator, entry, "cod_client", "Cod Client", "mdi:identifier"),
-        AquatimSensor(coordinator, entry, "nr_contract", "Număr Contract", "mdi:file-certificate"),
-        AquatimSensor(coordinator, entry, "adresa", "Adresă Consum", "mdi:map-marker"),
-        AquatimSensor(coordinator, entry, "stare", "Stare Contract", "mdi:check-circle"),
-        AquatimSensor(coordinator, entry, "sold", "Sold Curent", "mdi:cash-register", SensorDeviceClass.MONETARY, "RON"),
-        AquatimSensor(coordinator, entry, "perioada_index", "Status Perioadă Citire", "mdi:calendar-clock"),
-        AquatimSensor(coordinator, entry, "start_citire", "Început Perioadă Citire", "mdi:calendar-arrow-right"),
-        AquatimSensor(coordinator, entry, "sfarsit_citire", "Sfârșit Perioadă Citire", "mdi:calendar-arrow-left"),
+    # Executăm un update inițial pentru a avea date
+    await api_instance.get_data()
+    
+    sensor_definitions = [
+        ("nume", "Nume Client", "mdi:account", None, None),
+        ("cod_client", "Cod Client", "mdi:identifier", None, None),
+        ("nr_contract", "Număr Contract", "mdi:file-certificate", None, None),
+        ("adresa", "Adresă Consum", "mdi:map-marker", None, None),
+        ("stare", "Stare Contract", "mdi:check-circle", None, None),
+        ("sold", "Sold Curent", "mdi:cash-register", SensorDeviceClass.MONETARY, "RON"),
+        ("perioada_index", "Status Perioadă Citire", "mdi:calendar-clock", None, None),
+        ("start_citire", "Început Perioadă Citire", "mdi:calendar-arrow-right", None, None),
+        ("sfarsit_citire", "Sfârșit Perioadă Citire", "mdi:calendar-arrow-left", None, None),
     ]
     
-    async_add_entities(sensors)
+    sensors = []
+    for key, name, icon, device_class, unit in sensor_definitions:
+        sensors.append(
+            AquatimSensor(api_instance, entry, key, name, icon, device_class, unit)
+        )
+    
+    async_add_entities(sensors, True)
 
-class AquatimSensor(CoordinatorEntity, SensorEntity):
-    """Reprezentarea unui senzor Aquatim."""
+class AquatimSensor(Entity, SensorEntity):
+    """Reprezentarea unui senzor Aquatim ca entitate simplă."""
 
-    def __init__(self, coordinator, entry, key, name, icon, device_class=None, unit=None):
+    def __init__(self, api, entry, key, name, icon, device_class, unit):
         """Inițializare senzor."""
-        super().__init__(coordinator)
-        self._key = key
+        self._api = api
         self._entry = entry
+        self._key = key
+        
         self._attr_name = f"Aquatim {name}"
-        # Folosim direct entry.entry_id pentru a evita AttributeError
         self._attr_unique_id = f"aquatim_{entry.entry_id}_{key}"
         self._attr_icon = icon
         self._attr_device_class = device_class
@@ -48,14 +55,27 @@ class AquatimSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        """Returnează valoarea din datele coordinatorului."""
-        if not self.coordinator.data:
-            return None
-        return self.coordinator.data.get(self._key)
+        """Returnează valoarea direct din instanța API."""
+        # Presupunem că api.get_data() a fost deja rulat sau datele sunt stocate
+        # Dacă ai implementat stocarea în self.data în api.py, folosim aia:
+        if hasattr(self._api, "last_data") and self._api.last_data:
+             return self._api.last_data.get(self._key)
+        
+        # Dacă api.py returnează datele direct din funcția get_data fără stocare internă,
+        # va trebui să ne asigurăm că API-ul salvează undeva ultimul rezultat.
+        return None
+
+    async def async_update(self):
+        """Update periodic al senzorului."""
+        # Această metodă va rula periodic pentru a împrospăta datele
+        data = await self._api.get_data()
+        if data:
+            # Salvăm datele în instanța API pentru ca toți senzorii să le poată citi
+            self._api.last_data = data
 
     @property
     def device_info(self):
-        """Informații despre dispozitiv."""
+        """Grupare sub un singur dispozitiv."""
         return {
             "identifiers": {("Aquatim", self._entry.entry_id)},
             "name": "Portal Aquatim",
