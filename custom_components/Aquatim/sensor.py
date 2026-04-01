@@ -4,17 +4,14 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.helpers.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Configurare senzori Aquatim fără CoordinatorEntity."""
+    """Configurare senzori Aquatim."""
     api_instance = hass.data["Aquatim"][entry.entry_id]
     
-    # Executăm un update inițial pentru a avea date
-    await api_instance.get_data()
-    
+    # Definim senzorii
     sensor_definitions = [
         ("nume", "Nume Client", "mdi:account", None, None),
         ("cod_client", "Cod Client", "mdi:identifier", None, None),
@@ -33,10 +30,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
             AquatimSensor(api_instance, entry, key, name, icon, device_class, unit)
         )
     
+    # True forcează un update imediat la adăugare
     async_add_entities(sensors, True)
 
-class AquatimSensor(Entity, SensorEntity):
-    """Reprezentarea unui senzor Aquatim ca entitate simplă."""
+class AquatimSensor(SensorEntity):
+    """Reprezentarea unui senzor Aquatim. Am eliminat CoordinatorEntity de aici."""
 
     def __init__(self, api, entry, key, name, icon, device_class, unit):
         """Inițializare senzor."""
@@ -55,22 +53,17 @@ class AquatimSensor(Entity, SensorEntity):
 
     @property
     def native_value(self):
-        """Returnează valoarea direct din instanța API."""
-        # Presupunem că api.get_data() a fost deja rulat sau datele sunt stocate
-        # Dacă ai implementat stocarea în self.data în api.py, folosim aia:
+        """Returnează valoarea din cache-ul API-ului."""
         if hasattr(self._api, "last_data") and self._api.last_data:
              return self._api.last_data.get(self._key)
-        
-        # Dacă api.py returnează datele direct din funcția get_data fără stocare internă,
-        # va trebui să ne asigurăm că API-ul salvează undeva ultimul rezultat.
         return None
 
     async def async_update(self):
-        """Update periodic al senzorului."""
-        # Această metodă va rula periodic pentru a împrospăta datele
+        """Update periodic. Toți senzorii apelează asta, dar API-ul gestionează cache-ul."""
+        # Notă: Dacă vrei să eviți multiple login-uri simultane, 
+        # api.get_data() ar trebui să aibă o protecție internă sau un throttle.
         data = await self._api.get_data()
         if data:
-            # Salvăm datele în instanța API pentru ca toți senzorii să le poată citi
             self._api.last_data = data
 
     @property
