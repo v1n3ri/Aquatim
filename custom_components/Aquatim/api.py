@@ -7,6 +7,7 @@ from .const import URL_LOGIN, HEADERS
 _LOGGER = logging.getLogger(__name__)
 
 URL_PRELOAD = "https://portal.aquatim.ro/self_utilities/oui/cl/index.html?_infosession=preload"
+URL_ACTIVATE_DP = "https://portal.aquatim.ro/self_utilities/oui/cl/index.html?action=dp"
 URL_LISTA_CONTRACTE = "https://portal.aquatim.ro/self_utilities/rest/self/admcl/getListaContracte"
 
 class AquatimAPI:
@@ -17,7 +18,6 @@ class AquatimAPI:
 
     async def _get_session(self):
         if self.session is None or self.session.closed:
-            # Important: unsafe=True permite cookie-uri de pe domenii care par diferite dar sunt sub-resurse
             self.session = aiohttp.ClientSession(
                 headers=HEADERS,
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
@@ -28,88 +28,87 @@ class AquatimAPI:
         session = await self._get_session()
         
         try:
-            # PASUL 1: Request-ul de PRELOAD pe care l-ai găsit
-            # Acesta setează cookie-urile de infrastructură SAP (JSESSIONID etc.)
-            _LOGGER.debug("Inițializare sesiune SAP (Preload)...")
+            # 1. Pasul Preload (Pre-autentificare SAP)
             async with session.get(URL_PRELOAD, timeout=15) as resp:
                 await resp.text()
 
-            # PASUL 2: Încărcăm pagina de login vizuală
+            # 2. Obținem pagina de login și extragem input-urile ascunse
             async with session.get(URL_LOGIN, timeout=15) as resp:
                 html = await resp.text()
                 soup = BeautifulSoup(html, 'html.parser')
-                
-                # Extragem orice token ascuns care ar putea exista în formular
-                form_data = {}
-                for hidden_input in soup.find_all("input", type="hidden"):
-                    if hidden_input.get("name"):
-                        form_data[hidden_input.get("name")] = hidden_input.get("value", "")
+                form_data = {
+                    tag.get("name"): tag.get("value", "")
+                    for tag in soup.find_all("input", type="hidden")
+                    if tag.get("name")
+                }
 
-            # PASUL 3: Executăm Post-ul de login
-            payload = {
-                **form_data,
-                "user": self.email,
-                "pass": self.password,
-                "login": "Autentificare"
-            }
+            # 3. Trimitem datele de login
+            payload = {**form_data, "user": self.email, "pass": self.password, "login": "Autentificare"}
             
-            # Adăugăm headers specifice pentru a simula un browser complet
+            # Forțăm headers-ul să arate ca un browser care a dat click pe buton
             login_headers = {
                 **HEADERS,
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": "https://portal.aquatim.ro/self_utilities/login.jsp",
-                "Origin": "https://portal.aquatim.ro",
-                "Upgrade-Insecure-Requests": "1"
+                "Referer": URL_LOGIN,
+                "Origin": "https://portal.aquatim.ro"
             }
 
-            async with session.post(URL_LOGIN, data=payload, headers=login_headers, timeout=15, allow_redirects=True) as resp:
-                final_url = str(resp.url)
-                
-                # Verificăm dacă am scăpat de pagina de login
-                if resp.status == 200 and "login.jsp" not in final_url:
-                    _LOGGER.info("Autentificare reușită pe infrastructura SAP Aquatim.")
-                    return True
-                
-                _LOGGER.error("Autentificare eșuată. Serverul a refuzat accesul la %s", final_url)
-                return False
+            async with session.post(URL_LOGIN, data=payload, headers=login_headers, allow_redirects=True) as resp:
+                url_dupa_login = str(resp.url)
+                _LOGGER.debug("URL după POST login: %s", url_dupa_login)
+
+                if "login.jsp" in url_dupa_login:
+                    _LOGGER.error("Autentificare eșuată - Date incorecte sau sesiune respinsă.")
+                    return False
+
+            # 4. Simulăm încărcarea Component-preload.js (așteptăm 1.5 secunde)
+            # Acest delay este critic pentru ca serverul SAP să proceseze sesiunea
+            await asyncio.sleep(1.5)
+
+            # 5. Activăm Data Provider (Pasul esențial găsit de tine)
+            _LOGGER.debug("Activare Data Provider (action=dp)...")
+            async with session.get(URL_ACTIVATE_DP, timeout=15) as resp:
+                text_dp = await resp.text()
+                # Dacă primim un JSON cu "err: false", e perfect
+                _LOGGER.debug("Răspuns DP: %s", text_dp[:100])
+
+            return True
 
         except Exception as e:
-            _LOGGER.error("Eroare la procesul de login SAP: %s", e)
+            _LOGGER.error("Eroare la pașii de autentificare: %s", e)
             return False
 
     async def get_data(self):
+        # Încercăm login-ul complet
         if not await self.login():
             return None
 
-        # Aplicațiile SAP au nevoie de o secundă să proceseze sesiunea în spate
-        await asyncio.sleep(2)
         session = await self._get_session()
-        
-        # Headers pentru API-ul de date (foarte important Accept-ul JSON)
+        # Headers specifice pentru cererea REST de date
         data_headers = {
-            **HEADERS,
             "Accept": "application/json, text/plain, */*",
-            "X-Requested-With": "XMLHttpRequest"
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://portal.aquatim.ro/self_utilities/index.jsp",
+            "User-Agent": HEADERS["User-Agent"]
         }
 
         try:
             async with session.get(URL_LISTA_CONTRACTE, headers=data_headers, timeout=15) as resp:
-                if resp.status != 200:
-                    _LOGGER.error("Eroare preluare date. Status: %s", resp.status)
-                    return None
-                
-                data = await resp.json()
-                if isinstance(data, list) and len(data) > 0:
-                    c = data[0]
-                    return {
-                        "cod_client": str(c.get("codClient", "N/A")),
-                        "nr_contract": str(c.get("nrContract", "N/A")),
-                        "nume": c.get("denClient", "N/A"),
-                        "adresa": c.get("adrClient", "N/A"),
-                        "stare": c.get("stareContract", "N/A"),
-                        "sold": 0
-                    }
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        c = data[0]
+                        _LOGGER.info("Date primite pentru contract: %s", c.get("nrContract"))
+                        return {
+                            "cod_client": str(c.get("codClient")),
+                            "nr_contract": str(c.get("nrContract")),
+                            "nume": c.get("denClient"),
+                            "adresa": c.get("adrClient"),
+                            "stare": c.get("stareContract"),
+                            "sold": 0 # Vom popula asta într-un pas viitor
+                        }
+                _LOGGER.warning("Status server date: %s. Nu s-au găsit contracte.", resp.status)
                 return None
         except Exception as e:
-            _LOGGER.error("Eroare la parsarea datelor JSON: %s", e)
+            _LOGGER.error("Eroare la preluarea listei de contracte: %s", e)
             return None
