@@ -1,15 +1,14 @@
 import aiohttp
 import logging
 import asyncio
+import urllib.parse
 from bs4 import BeautifulSoup
 from .const import URL_LOGIN, HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
-# URL-uri extrase din Component.js și Component-preload.js
-URL_BASE_REST = "https://portal.aquatim.ro/self_utilities/rest/self/"
-URL_INFO_SESSION = f"{URL_BASE_REST}infoSession"
-URL_LISTA_CONTRACTE = f"{URL_BASE_REST}admcl/getListaContracte"
+URL_INFO_SESSION = "https://portal.aquatim.ro/self_utilities/rest/self/infoSession"
+URL_LISTA_CONTRACTE = "https://portal.aquatim.ro/self_utilities/rest/self/admcl/getListaContracte"
 
 class AquatimAPI:
     def __init__(self, email, password):
@@ -29,11 +28,7 @@ class AquatimAPI:
         session = await self._get_session()
         
         try:
-            # 1. Inițializăm sesiunea (InfoSession POST - conform onInit din JS)
-            # Chiar dacă nu suntem logați, acest apel creează contextul de securitate
-            await session.post(URL_INFO_SESSION, json={}, timeout=10)
-
-            # 2. Preluăm token-urile din pagina de login
+            # PASUL 1: Preluăm pagina de login pentru cookie-uri inițiale și campuri hidden
             async with session.get(URL_LOGIN, timeout=10) as resp:
                 html = await resp.text()
                 soup = BeautifulSoup(html, 'html.parser')
@@ -43,7 +38,7 @@ class AquatimAPI:
                     if tag.get("name")
                 }
 
-            # 3. Executăm Autentificarea
+            # PASUL 2: POST Login
             payload = {
                 **form_data,
                 "user": self.email,
@@ -51,38 +46,41 @@ class AquatimAPI:
                 "login": "Autentificare"
             }
             
+            # Folosim encoding manual pentru a fi siguri că caracterele speciale din parolă ajung corect
+            encoded_payload = urllib.parse.urlencode(payload)
+            
             login_headers = {
                 **HEADERS,
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": URL_LOGIN,
-                "Origin": "https://portal.aquatim.ro"
+                "Referer": URL_LOGIN
             }
 
-            async with session.post(URL_LOGIN, data=payload, headers=login_headers, allow_redirects=True) as resp:
-                final_url = str(resp.url)
-                if "login.jsp" in final_url:
-                    _LOGGER.error("Aquatim a respins autentificarea. Verificați email-ul și parola.")
+            async with session.post(URL_LOGIN, data=encoded_payload, headers=login_headers, allow_redirects=True) as resp:
+                if "login.jsp" in str(resp.url):
+                    _LOGGER.error("Autentificare respinsă (URL-ul a rămas login.jsp)")
                     return False
 
-            # 4. PASUL CRITIC: Validăm sesiunea de date (Re-apelăm infoSession după login)
-            # Aceasta este metoda prin care interfața UI5 își confirmă drepturile de acces
-            _LOGGER.debug("Validare sesiune post-login...")
+            # PASUL 3: ACTIVARE SESIUNE (Request-ul descoperit de tine!)
+            # Fără acest POST, deși suntem logați, API-ul de date va returna eroare sau listă goală
+            _LOGGER.debug("Activare sesiune via infoSession...")
             async with session.post(URL_INFO_SESSION, json={}, headers={"X-Requested-With": "XMLHttpRequest"}) as resp:
                 if resp.status == 200:
-                    _LOGGER.info("Sesiune Aquatim validată cu succes.")
+                    _LOGGER.info("Sesiune Aquatim activată cu succes.")
                     return True
                 
-            return False
+                _LOGGER.error("Eroare la activarea sesiunii infoSession: %s", resp.status)
+                return False
 
         except Exception as e:
-            _LOGGER.error("Eroare în fluxul de autentificare Aquatim: %s", e)
+            _LOGGER.error("Eroare în procesul de login: %s", e)
             return False
 
     async def get_data(self):
+        # Ne asigurăm că suntem logați și sesiunea e activată
         if not await self.login():
             return None
 
-        # Pauză scurtă pentru procesarea serverului
+        # O mică pauză pentru ca backend-ul să proceseze activarea
         await asyncio.sleep(1)
         session = await self._get_session()
         
@@ -100,15 +98,15 @@ class AquatimAPI:
                     if isinstance(data, list) and len(data) > 0:
                         c = data[0]
                         return {
-                            "cod_client": str(c.get("codClient")),
-                            "nr_contract": str(c.get("nrContract")),
-                            "nume": c.get("denClient"),
-                            "adresa": c.get("adrClient"),
-                            "stare": c.get("stareContract"),
+                            "cod_client": str(c.get("codClient", "N/A")),
+                            "nr_contract": str(c.get("nrContract", "N/A")),
+                            "nume": c.get("denClient", "N/A"),
+                            "adresa": c.get("adrClient", "N/A"),
+                            "stare": c.get("stareContract", "N/A"),
                             "sold": 0
                         }
-                _LOGGER.warning("Status neașteptat la preluare contracte: %s", resp.status)
+                _LOGGER.warning("Nu s-au putut prelua contractele. Status: %s", resp.status)
                 return None
         except Exception as e:
-            _LOGGER.error("Eroare la preluarea datelor: %s", e)
+            _LOGGER.error("Eroare la preluarea datelor finale: %s", e)
             return None
