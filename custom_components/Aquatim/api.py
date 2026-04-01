@@ -5,7 +5,6 @@ from .const import HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
-# URL-ul de login REST identificat de tine
 URL_REST_LOGIN = "https://portal.aquatim.ro/self_utilities/rest/admcl/login"
 URL_INFO_SESSION = "https://portal.aquatim.ro/self_utilities/rest/self/infoSession"
 URL_LISTA_CONTRACTE = "https://portal.aquatim.ro/self_utilities/rest/self/admcl/getListaContracte"
@@ -18,51 +17,61 @@ class AquatimAPI:
 
     async def _get_session(self):
         if self.session is None or self.session.closed:
+            # Recreăm setul de headere exact cum l-ai trimis tu din browser
+            browser_headers = {
+                "authority": "portal.aquatim.ro",
+                "accept": "application/json, text/javascript, */*; q=0.01",
+                "accept-language": "en-US,en;q=0.9,ro-RO;q=0.8,ro;q=0.7",
+                "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "origin": "https://portal.aquatim.ro",
+                "referer": "https://portal.aquatim.ro/self_utilities/login.jsp",
+                "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "x-requested-with": "XMLHttpRequest",
+            }
             self.session = aiohttp.ClientSession(
-                headers=HEADERS,
+                headers=browser_headers,
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
         return self.session
 
     async def login(self):
         session = await self._get_session()
-        
         try:
-            # PASUL 1: Login folosind exact numele câmpurilor din browser
-            # Trimitem ca Form Data (data=...), nu ca JSON (json=...)
+            # Cloudflare are nevoie de o vizită inițială pentru a seta cookie-urile de bază
+            async with session.get("https://portal.aquatim.ro/self_utilities/login.jsp") as resp:
+                await resp.text()
+
             login_data = {
                 "user": self.email,
-                "password": self.password  # Am schimbat din 'pass' în 'password'
+                "password": self.password 
             }
             
-            _LOGGER.debug("Trimitere login REST (Form Data) către %s", URL_REST_LOGIN)
+            _LOGGER.warning("Trimitere Login către Cloudflare/Aquatim...")
             
-            headers = {
-                **HEADERS,
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": "https://portal.aquatim.ro/self_utilities/login.jsp"
-            }
-
-            async with session.post(URL_REST_LOGIN, data=login_data, headers=headers) as resp:
-                if resp.status != 200:
-                    _LOGGER.error("Serverul a returnat status %s la login REST", resp.status)
+            async with session.post(URL_REST_LOGIN, data=login_data) as resp:
+                res_text = await resp.text()
+                _LOGGER.warning("Răspuns Login (Status %s): %s", resp.status, res_text)
+                
+                # Cloudflare poate returna 403 dacă ne detectează
+                if resp.status == 403:
+                    _LOGGER.error("Acces blocat de Cloudflare. Integrarea nu poate trece de protecție.")
                     return False
                 
-                # Citim răspunsul (probabil un JSON de confirmare)
-                res_text = await resp.text()
-                _LOGGER.debug("Răspuns login: %s", res_text)
+                if resp.status != 200:
+                    return False
 
-            # PASUL 2: Activare sesiune (infoSession) - POST conform JS
-            async with session.post(URL_INFO_SESSION, json={}, headers={"X-Requested-With": "XMLHttpRequest"}) as resp:
-                if resp.status == 200:
-                    _LOGGER.info("Sesiune Aquatim activată cu succes.")
-                    return True
-                
-            return False
+            # Pasul 2: InfoSession
+            async with session.post(URL_INFO_SESSION, json={}) as resp:
+                return resp.status == 200
 
         except Exception as e:
-            _LOGGER.error("Eroare la autentificarea REST: %s", e)
+            _LOGGER.error("Eroare la autentificare: %s", e)
             return False
 
     async def get_data(self):
@@ -72,25 +81,19 @@ class AquatimAPI:
         await asyncio.sleep(1)
         session = await self._get_session()
         
-        headers = {
-            "Accept": "application/json, text/plain, */*",
-            "X-Requested-With": "XMLHttpRequest"
-        }
-
         try:
-            async with session.get(URL_LISTA_CONTRACTE, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if isinstance(data, list) and len(data) > 0:
-                        c = data[0]
-                        return {
-                            "cod_client": str(c.get("codClient", "N/A")),
-                            "nr_contract": str(c.get("nrContract", "N/A")),
-                            "nume": c.get("denClient", "N/A"),
-                            "adresa": c.get("adrClient", "N/A"),
-                            "stare": c.get("stareContract", "N/A")
-                        }
-                return None
+            async with session.get(URL_LISTA_CONTRACTE) as resp:
+                data = await resp.json()
+                if isinstance(data, list) and len(data) > 0:
+                    c = data[0]
+                    return {
+                        "cod_client": str(c.get("codClient", "N/A")),
+                        "nr_contract": str(c.get("nrContract", "N/A")),
+                        "nume": c.get("denClient", "N/A"),
+                        "adresa": c.get("adrClient", "N/A"),
+                        "stare": c.get("stareContract", "N/A")
+                    }
+            return None
         except Exception as e:
-            _LOGGER.error("Eroare la preluarea datelor: %s", e)
+            _LOGGER.error("Eroare preluare date: %s", e)
             return None
