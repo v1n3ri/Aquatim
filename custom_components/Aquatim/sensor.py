@@ -67,10 +67,15 @@ class AquatimSensor(SensorEntity):
 
     @property
     def device_info(self):
-        """Grupare sub un singur dispozitiv."""
+        """Grupare sub adresa de consum, nu sub un nume generic."""
+        # Extragem adresa din cache-ul API-ului
+        address = "Aquatim Portal"
+        if hasattr(self._api, "last_data") and self._api.last_data:
+            address = self._api.last_data.get("adresa", "Aquatim Portal")
+
         return {
             "identifiers": {("Aquatim", self._entry.entry_id)},
-            "name": "Aquatim Portal",
-            "manufacturer": "Dan Drasovean (v1n3ri)",
+            "name": address,  # Aici punem adresa (ex: VIORELELOR, nr. 15)
+            "manufacturer": "Aquatim SA",
             "entry_type": "service",
         }
