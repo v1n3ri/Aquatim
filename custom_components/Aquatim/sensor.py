@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorDeviceClass,
@@ -7,11 +8,14 @@ from homeassistant.components.sensor import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Definim intervalul de scanare la 4 ore (240 minute)
+SCAN_INTERVAL = timedelta(hours=4)
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Configurare senzori Aquatim."""
     api_instance = hass.data["Aquatim"][entry.entry_id]
     
-    # Definim senzorii
+    # Definim senzorii (fără prefixul "Aquatim" în nume)
     sensor_definitions = [
         ("nume", "Nume Client", "mdi:account", None, None),
         ("cod_client", "Cod Client", "mdi:identifier", None, None),
@@ -30,11 +34,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
             AquatimSensor(api_instance, entry, key, name, icon, device_class, unit)
         )
     
-    # True forcează un update imediat la adăugare
+    # Al doilea argument 'True' forțează un update imediat la pornire
     async_add_entities(sensors, True)
 
 class AquatimSensor(SensorEntity):
-    """Reprezentarea unui senzor Aquatim. Am eliminat CoordinatorEntity de aici."""
+    """Reprezentarea unui senzor Aquatim."""
 
     def __init__(self, api, entry, key, name, icon, device_class, unit):
         """Inițializare senzor."""
@@ -42,7 +46,7 @@ class AquatimSensor(SensorEntity):
         self._entry = entry
         self._key = key
         
-        self._attr_name = f"Aquatim {name}"
+        self._attr_name = name 
         self._attr_unique_id = f"aquatim_{entry.entry_id}_{key}"
         self._attr_icon = icon
         self._attr_device_class = device_class
@@ -53,25 +57,21 @@ class AquatimSensor(SensorEntity):
 
     @property
     def native_value(self):
-        """Returnează valoarea din cache-ul API-ului."""
+        """Returnează valoarea din cache-ul stocat în API."""
         if hasattr(self._api, "last_data") and self._api.last_data:
              return self._api.last_data.get(self._key)
         return None
 
     async def async_update(self):
-        """Update periodic. Toți senzorii apelează asta, dar API-ul gestionează cache-ul."""
-        # Notă: Dacă vrei să eviți multiple login-uri simultane, 
-        # api.get_data() ar trebui să aibă o protecție internă sau un throttle.
+        """Update periodic la fiecare 4 ore."""
+        # Această metodă va fi apelată automat de Home Assistant conform SCAN_INTERVAL
+        _LOGGER.debug("Actualizare date Aquatim pentru senzorul %s", self._key)
         data = await self._api.get_data()
         if data:
             self._api.last_data = data
 
     @property
     def device_info(self):
-        """Grupare sub un singur dispozitiv."""
+        """Grupare sub un singur dispozitiv în interfață."""
         return {
-            "identifiers": {("Aquatim", self._entry.entry_id)},
-            "name": "Portal Aquatim",
-            "manufacturer": "Aquatim SA",
-            "entry_type": "service",
-        }
+            "identifiers": {("Aquatim", self._entry.entry_id
